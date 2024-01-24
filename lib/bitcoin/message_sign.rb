@@ -1,7 +1,7 @@
+require "base64"
+
 module Bitcoin
-
   module MessageSign
-
     class Error < StandardError; end
 
     module_function
@@ -21,26 +21,26 @@ module Bitcoin
       validate_format!(format)
       digest = message_hash(message, prefix: prefix, legacy: format == FORMAT_LEGACY)
       sig = case format
-            when FORMAT_LEGACY
-              key.sign_compact(digest)
+        when FORMAT_LEGACY
+          key.sign_compact(digest)
+        else
+          validate_address!(address)
+          addr = Bitcoin::Script.parse_from_addr(address)
+          sig_ver, algo = if addr.p2wpkh?
+              [:witness_v0, :ecdsa]
+            elsif addr.p2tr?
+              [:taproot, :schnorr]
             else
-              validate_address!(address)
-              addr = Bitcoin::Script.parse_from_addr(address)
-              sig_ver, algo = if addr.p2wpkh?
-                                [:witness_v0, :ecdsa]
-                              elsif addr.p2tr?
-                                [:taproot, :schnorr]
-                              else
-                                raise ArgumentError "#{address} dose not supported."
-                              end
-              tx = to_sign_tx(digest, address)
-              prev_out = Bitcoin::TxOut.new(script_pubkey: addr)
-              sighash = tx.sighash_for_input(0, addr, sig_version: sig_ver, amount: 0, prevouts: [prev_out])
-              sig = key.sign(sighash, algo: algo) + [Bitcoin::SIGHASH_TYPE[:all]].pack('C')
-              tx.in[0].script_witness.stack << sig
-              tx.in[0].script_witness.stack << key.pubkey.htb
-              format == FORMAT_SIMPLE ? tx.in[0].script_witness.to_payload : tx.to_payload
+              raise ArgumentError "#{address} dose not supported."
             end
+          tx = to_sign_tx(digest, address)
+          prev_out = Bitcoin::TxOut.new(script_pubkey: addr)
+          sighash = tx.sighash_for_input(0, addr, sig_version: sig_ver, amount: 0, prevouts: [prev_out])
+          sig = key.sign(sighash, algo: algo) + [Bitcoin::SIGHASH_TYPE[:all]].pack("C")
+          tx.in[0].script_witness.stack << sig
+          tx.in[0].script_witness.stack << key.pubkey.htb
+          format == FORMAT_SIMPLE ? tx.in[0].script_witness.to_payload : tx.to_payload
+        end
       Base64.strict_encode64(sig)
     end
 
@@ -54,7 +54,7 @@ module Bitcoin
       begin
         sig = Base64.strict_decode64(signature)
       rescue ArgumentError
-        raise ArgumentError, 'Invalid signature'
+        raise ArgumentError, "Invalid signature"
       end
       begin
         # Legacy verification
@@ -77,14 +77,14 @@ module Bitcoin
       if legacy
         Bitcoin.double_sha256(Bitcoin.pack_var_string(prefix) << Bitcoin.pack_var_string(message))
       else
-        Bitcoin.tagged_hash('BIP0322-signed-message', message)
+        Bitcoin.tagged_hash("BIP0322-signed-message", message)
       end
     end
 
     def validate_address!(address)
-      raise ArgumentError, 'Invalid address' unless Bitcoin.valid_address?(address)
+      raise ArgumentError, "Invalid address" unless Bitcoin.valid_address?(address)
       script = Bitcoin::Script.parse_from_addr(address)
-      raise ArgumentError, 'This address unsupported' if script.p2sh? || script.p2wsh?
+      raise ArgumentError, "This address unsupported" if script.p2sh? || script.p2wsh?
     end
 
     def validate_format!(format)
